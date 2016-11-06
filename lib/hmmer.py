@@ -3,6 +3,7 @@ import tempfile
 import math
 import numpy
 import os
+import io
 
 from Bio import SeqIO
 from scipy.sparse import csr_matrix
@@ -46,6 +47,8 @@ def hmmscan(seq_records, database_path, domain_idx, output_file_handle=None, cor
 
     :param output_file_handle: file object
         If set, will save protein_name, domain, value to the TSV file
+    :param core_num: int
+        The number of cores to pass to hmmscan
 
     Returns:
 
@@ -101,35 +104,37 @@ def hmmscan(seq_records, database_path, domain_idx, output_file_handle=None, cor
     return sparse_scores, query_idx
 
 
-def hmmstats(stat_file):
+def hmmstats(database_path):
     """
-    hmmstats retrieves a list of domain accessions from a hmm stats file
+    hmmstats retrieves a list of domain accessions from the hmm database file
 
-    :param stat_file: str
-        Path to the hmm stats file
+    :param database_path: str
+        Path to the hmm database file
 
     :return hmm_name: dict
         A dict of column index names keyed by the domain accession
     """
 
+    # Check to make sure that the database exists in a hmmbuild packed format
+    if not os.path.isfile(database_path + ".h3p"):
+        raise FileNotFoundError(database_path + ".h3p")
+
+    # Run hmmstat on the hmm database and get the stdout
+    hmmstat_output = subprocess.Popen(["hmmstat", database_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      universal_newlines=True).communicate()[0]
+
     hmm_name = {}
 
-    try:
-        with open(stat_file, mode="rU") as stat_fh:
-            for line in stat_fh:
+    # Iterate through the hmmstat output by line and save an index dict
+    for line in hmmstat_output.splitlines():
+        try:
+            if "#" == line[0]:
+                continue
 
-                if "#" == line[0]:
-                    continue
-
-                line_tabs = line.split()
-
-                if len(line_tabs) < 2:
-                    continue
-
-                hmm_name_len = len(hmm_name)
-                hmm_name[line_tabs[2]] = hmm_name_len
-    except FileNotFoundError:
-        raise
+            hmm_name_len = len(hmm_name)
+            hmm_name[line.split()[2].strip()] = hmm_name_len
+        except IndexError:
+            continue
 
     return hmm_name
 
@@ -156,6 +161,8 @@ def hmm_file_import(data_file, domain_idx):
 
     with open(data_file, mode="rU") as data_fh:
 
+        # Run through the input file and save unique protein accession IDs into a index dict
+
         row_name_idx = {}
         for line in data_fh:
             try:
@@ -170,6 +177,9 @@ def hmm_file_import(data_file, domain_idx):
                 row_name_idx[line_name] = next_idx
 
         data_fh.seek(0)
+
+        # Run through the input file again and save the domain scores into a sparse lil_matrix
+        # Building to a dense numpy array is faster but the memory usage on large data sets is extreme
 
         hmmer_data = lil_matrix((len(row_name_idx), len(domain_idx)), dtype=numpy.int16)
         for line in data_fh:
@@ -186,4 +196,5 @@ def hmm_file_import(data_file, domain_idx):
 
             hmmer_data[row_name_idx[line_name], domain_idx[line_domain]] = line_score
 
+    # Convert the lil_matrix to a csr_matrix and return it
     return csr_matrix(hmmer_data, dtype=numpy.int16), row_name_idx

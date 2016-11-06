@@ -6,9 +6,15 @@ from sklearn.externals import joblib
 
 from lib.hmmer import hmmstats
 from lib.hmmer import hmmscan
+from lib.hmmer import hmm_file_import
 
 
 def main():
+    """
+    The go_predicts module takes an input sequence file and a SVC model object and makes predictions about gene ontology
+    based on the domain scores generated from a HMM domain model database
+    """
+
     sh_parse = argparse.ArgumentParser(description="Preprocess a fasta file into a HMM prediction flatfile")
     sh_parse.add_argument("-f", "--file", dest="infile", help="Input sequence FILE", metavar="FILE", required=True)
     sh_parse.add_argument("-o", "--out", dest="outfile", help="Output matrix FILE", metavar="FILE", required=True)
@@ -25,15 +31,38 @@ def main():
 
 
 def go_predict(in_file, out_file, database_path, modelfile_path, in_type="fasta", core_num=1):
+    """
+    go_predict is the worker function to predict gene ontologies from protein domain scores
+
+    Required Arguments:
+
+    :param in_file: str
+        Path to the input sequence or hmm domain predictions flatfile
+    :param out_file: str
+        Output file name for the predictions
+    :param database_path: str
+        Path to the hmm model database files
+    :param modelfile_path: str
+        Path to the SVC estimator object that's been serialized by joblib
+
+    Keyword Arguments:
+
+    :param in_type: str
+        The input file type. Takes anything that SeqIO takes, plus hmm which imports a hmm domain score flatfile
+    :param core_num: int
+        The number of cores to use for hmmscan
+    """
     svc_model_est = joblib.load(modelfile_path)
-    domain_col_idx = hmmstats(database_path + ".stats")
+    domain_col_idx = hmmstats(database_path)
 
-    with open(in_file, mode="rU") as in_fh:
-        seq_record_list = list(SeqIO.parse(in_file, format=in_type, alphabet=generic_protein))
+    if in_type == "hmm":
+        domain_data, protein_row_idx = hmm_file_import(in_file, domain_col_idx)
+    else:
+        with open(in_file, mode="rU") as in_fh:
+            seq_record_list = list(SeqIO.parse(in_fh, format=in_type, alphabet=generic_protein))
+            print("File Read Complete: {} Sequences Detected".format(len(seq_record_list)))
 
-    print("File Read Complete: {} Sequences Detected".format(len(seq_record_list)))
-
-    domain_data, protein_row_idx = hmmscan(seq_record_list, database_path, domain_col_idx, core_num=core_num)
+        domain_data, protein_row_idx = hmmscan(seq_record_list, database_path, domain_col_idx, core_num=core_num)
 
     print("Protein hmm scan complete: {} entries in {} x {} matrix".format(domain_data.count_nonzero(),
                                                                            domain_data.shape[0],

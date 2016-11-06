@@ -1,16 +1,20 @@
 import argparse
 import math
-import io
 import multiprocessing
 
 from Bio import SeqIO
 from Bio.Alphabet import generic_protein
 
 from lib.hmmer import hmmstats
-from lib.hmmer import hmmscan
+from lib.hmmer import HmmscanProcess
 
 
 def main():
+    """
+    The go_preprocess module takes an input sequence file and turns it into a HMM prediction flatfile using a HMM
+    model database.
+    """
+
     sh_parse = argparse.ArgumentParser(description="Preprocess a fasta file into a HMM prediction flatfile")
     sh_parse.add_argument("-f", "--file", dest="infile", help="Input sequence FILE", metavar="FILE", required=True)
     sh_parse.add_argument("-o", "--out", dest="outfile", help="Output matrix FILE", metavar="FILE", required=True)
@@ -25,19 +29,47 @@ def main():
 
 
 def go_preprocess(in_file, out_file, database_path, in_type="fasta", batch_size=200, core_num=1):
+    """
+    go_preprocess is the worker function to take an input sequence file and score protein domains based on a HMM model
+    database
+
+    Required Arguments:
+
+    :param in_file: str
+        Location of the input sequence file
+    :param out_file: str
+        Location of the output protein domain score flatfile
+    :param database_path:
+        Location of the hmm model database files
+
+    Keyword Arguments:
+
+    :param in_type: str
+        Format of the input sequence file. Takes anything SeqIO does.
+    :param batch_size: int
+        Break jobs into batch pieces and multiprocess.pool them through hmmscan. Faster then giving hmmscan more cores
+    :param core_num: int
+        Number of cores to use for parallelization
+    """
+
+    # Parse the input sequence file into a list of seq_records
     with open(in_file, mode="rU") as in_fh:
         input_data = list(SeqIO.parse(in_fh, in_type, alphabet=generic_protein))
 
     print("File Read Complete: {} Sequences Detected".format(len(input_data)))
 
+    # Parse the hmm model database stats
     try:
-        domain_idx = hmmstats(database_path + ".stats")
+        domain_idx = hmmstats(database_path)
     except FileNotFoundError:
-        print("Database stats file not found")
+        print("Database file not found")
         exit(0)
 
+    # Instantiate the HmmscanProcess class, which is a wrapper for hmmscan to facilitate imap through
+    # multiprocessing.Pool
     hmmscan_process = HmmscanProcess(database_path, domain_idx, core_num=2)
 
+    # Build a generator to create data slices to pass to multiprocessing.Pool
     def _data_slice_gen(data, size):
         for looper in range(math.ceil(len(data) / size)):
             slice_start = looper * size
@@ -57,20 +89,6 @@ def go_preprocess(in_file, out_file, database_path, in_type="fasta", batch_size=
             print(string_fh.getvalue(), file=out_fh)
             print("HMMSCAN #{} completed on records {}-{}".format(loop_num, start, stop))
             string_fh.close()
-
-
-class HmmscanProcess:
-    def __init__(self, database_path, domain_idx, core_num=2):
-        self.database_path = database_path
-        self.domain_idx = domain_idx
-        self.core_num = core_num
-
-    def scan(self, data_package):
-        data, loop_num, slice_start, slice_stop = data_package
-
-        fake_file_handle = io.StringIO()
-        hmmscan(data, self.database_path, self.domain_idx, output_file_handle=fake_file_handle, core_num=self.core_num)
-        return fake_file_handle, loop_num, slice_start, slice_stop
 
 
 if __name__ == '__main__':
