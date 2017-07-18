@@ -1,11 +1,23 @@
 import argparse
 
 from sklearn.externals import joblib
+from numpy import logspace
+from numpy import linspace
 
 from lib.hmmer import hmm_file_import
 from lib.hmmer import hmmstats
 from lib.go_parser import parse_gaf
 from lib.svc import model_test
+from lib.svc import model_build
+from lib.svc import print_cv_results
+
+PARAM_SPACE = {"C": list(linspace(0.005, 0.05, num=10)),
+               "kernel": ["rbf"],
+               "gamma": list(linspace(0.002, 0.02, num=10))}
+
+BUILD_PARAM = {"kernel": "rbf",
+               "C": 0.05,
+               "gamma": 0.01}
 
 
 def main():
@@ -23,14 +35,19 @@ def main():
     sh_parse.add_argument("-o", "--out", dest="outfile", help="Output model FILE", metavar="FILE", required=True)
     sh_parse.add_argument("--cpu", dest="cores", help="Number of processor CORES to use", metavar="COREs", type=int,
                           default=1)
+    sh_parse.add_argument("--linear", dest="linear", help="Use the liblinear library", action="store_const", const=True,
+                          default=False)
+    sh_parse.add_argument("--test", dest="gridsearch", help="Run grid search", action="store_const", const=True,
+                          default=False)
 
     sh_args = sh_parse.parse_args()
 
     go_model_build(sh_args.hmmfile, sh_args.gofile, sh_args.golist, sh_args.outfile, sh_args.database,
-                   core_num=sh_args.cores)
+                   core_num=sh_args.cores, liblinear=sh_args.linear, grid_search=sh_args.gridsearch)
 
 
-def go_model_build(hmmfile_path, gofile_path, golist_path, outfile_path, database_path, core_num=1):
+def go_model_build(hmmfile_path, gofile_path, golist_path, outfile_path, database_path, core_num=1, gofile_type="gaf",
+                   liblinear=False, grid_search=False):
     """
     go_model_build is the worker function to build a SVC from protein domain scores, using gene ontology classifications
 
@@ -78,7 +95,7 @@ def go_model_build(hmmfile_path, gofile_path, golist_path, outfile_path, databas
     print("Gene Ontology list parsed: {} terms identified".format(len(go_list)))
 
     # Parse the GAF file containing gene ontology annotations, restricted to the inclusion list
-    protein_go_matrix, go_col_idx = parse_gaf(gofile_path, protein_row_idx, go_list)
+    protein_go_matrix, go_col_idx = parse_gaf(gofile_path, protein_row_idx, go_list, file_type=gofile_type)
     print("Gene Ontology file parsed: {} entries in {} x {} matrix".format(protein_go_matrix.count_nonzero(),
                                                                            protein_go_matrix.shape[0],
                                                                            protein_go_matrix.shape[1]))
@@ -86,7 +103,19 @@ def go_model_build(hmmfile_path, gofile_path, golist_path, outfile_path, databas
     # For each GO term, build a SVC model and serialize it with joblib
     for model_idx, model_name in enumerate(go_col_idx.keys()):
         print("Fitting Model #{} GO:{}".format(model_idx, model_name))
-        best_model = model_test(protein_domain_matrix, protein_go_matrix[:, model_idx], cores=core_num)
+
+        if grid_search:
+            best_model, model_stats = model_test(protein_domain_matrix, protein_go_matrix[:, model_idx], cores=core_num,
+                                                 liblinear=liblinear, param_grid=PARAM_SPACE)
+            with open("{}.{}.stats".format(outfile_path, model_name), mode="w") as stat_fh:
+                print_cv_results(model_stats, stat_fh)
+        else:
+            best_model = model_build(protein_domain_matrix, protein_go_matrix[:, model_idx],
+                                     kernel=BUILD_PARAM["kernel"],
+                                     C=BUILD_PARAM["C"],
+                                     gamma=BUILD_PARAM["gamma"],
+                                     test_size=0.33)
+
         joblib.dump(best_model, "{}.{}.joblib".format(outfile_path, model_name), compress=True)
 
 

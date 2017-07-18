@@ -9,6 +9,9 @@ from Bio import SeqIO
 from scipy.sparse import csr_matrix
 from scipy.sparse import lil_matrix
 
+LINE_SCORE_IDX = 5
+LINE_QUERY_IDX = 2
+LINE_DOMAIN_IDX = 1
 
 class HmmscanProcess:
     """
@@ -64,9 +67,6 @@ def hmmscan(seq_records, database_path, domain_idx, output_file_handle=None, cor
     with open(fasta_temp[0], mode="w") as seq_file:
         SeqIO.write(seq_records, seq_file, format="fasta")
 
-    if output_file_handle is not None:
-        print("#{}".format(database_path), file=output_file_handle)
-
     # Run hmmscan on the fasta file and throw away the
     hmmscan_cmd = ["hmmscan", "--cpu", str(core_num), "--tblout", hmmer_temp[1], database_path, fasta_temp[1]]
     subprocess.call(hmmscan_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -81,9 +81,9 @@ def hmmscan(seq_records, database_path, domain_idx, output_file_handle=None, cor
             line_tabs = line.strip().split()
 
             try:
-                line_score = math.ceil(float(line_tabs[5]) * 10)
-                line_query = line_tabs[2].strip()
-                line_domain = line_tabs[1].strip()
+                line_score = math.ceil(float(line_tabs[LINE_SCORE_IDX]) * 10)
+                line_query = line_tabs[LINE_QUERY_IDX].strip()
+                line_domain = line_tabs[LINE_DOMAIN_IDX].strip()
             except IndexError:
                 continue
 

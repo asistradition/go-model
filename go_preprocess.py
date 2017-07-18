@@ -61,6 +61,7 @@ def go_preprocess(in_file, out_file, database_path, in_type="fasta", batch_size=
     # Parse the hmm model database stats
     try:
         domain_idx = hmmstats(database_path)
+        print("Identified {} HMM models in {}".format(len(domain_idx), database_path))
     except FileNotFoundError:
         print("Database file not found")
         exit(0)
